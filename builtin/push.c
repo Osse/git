@@ -14,6 +14,7 @@
 #include "submodule-config.h"
 #include "send-pack.h"
 #include "color.h"
+#include "reflog-walk.h"
 
 static const char * const push_usage[] = {
 	N_("git push [<options>] [<repository> [<refspec>...]]"),
@@ -29,6 +30,12 @@ static char push_colors[][COLOR_MAXLEN] = {
 enum color_push {
 	PUSH_COLOR_RESET = 0,
 	PUSH_COLOR_ERROR = 1
+};
+
+enum rebased_history {
+	HELL_NO = 0,
+	MAYBE = 1,
+	MOS_DEF = 2
 };
 
 static int parse_push_color_slot(const char *slot)
@@ -53,6 +60,7 @@ static const char *receivepack;
 static int verbosity;
 static int progress = -1;
 static int recurse_submodules = RECURSE_SUBMODULES_DEFAULT;
+static int test_rebased = 0;
 static enum transport_family family;
 
 static struct push_cas_option cas;
@@ -223,6 +231,48 @@ static void setup_push_current(struct remote *remote, struct branch *branch)
 	refspec_appendf(&rs, "%s:%s", branch->refname, branch->refname);
 }
 
+static int likely_rebased_history(struct refspec *rs)
+{
+	struct child_process myscript = CHILD_PROCESS_INIT;
+	struct refspec_item *item = NULL;
+	struct branch *branch = NULL;
+	int ret;
+
+	if (rs->nr > 1)
+		return 0;
+
+	item = &rs->items[0];
+
+	if (item->force || item->negative)
+		return 0;
+
+	char *c = item->src + 11;
+	branch = branch_get(c);
+	if(!branch || strcmp(branch->refname, pushremote_for_branch(branch, NULL)))
+	   return 0;
+
+	myscript.git_cmd = 1;
+
+	strvec_push(&myscript.args, "rebased--helper");
+	strvec_push(&myscript.args, item->src);
+	strvec_push(&myscript.args, item->dst);
+
+	start_command(&myscript);
+
+	ret = finish_command(&myscript);
+
+	switch (ret) {
+	case HELL_NO:
+		return 0;
+	case MAYBE:
+		return 1;
+	case MOS_DEF:
+		return 2;
+	};
+
+	return ret;
+}
+
 static int is_workflow_triangular(struct remote *remote)
 {
 	struct remote *fetch_remote = remote_get(NULL);
@@ -269,6 +319,12 @@ static const char message_advice_pull_before_push[] =
 	   "'git pull ...') before pushing again.\n"
 	   "See the 'Note about fast-forwards' in 'git push --help' for details.");
 
+static const char message_advice_push_force_with_lease[] =
+	N_("Updates were rejected because the tip of your current branch is behind\n"
+	   "its remote counterpart, but history appears rebased. Consider using\n"
+	   "'git push push --force-with-lease ...'.\n"
+	   "See the 'Note about fast-forwards' in 'git push --help' for details.");
+
 static const char message_advice_checkout_pull_push[] =
 	N_("Updates were rejected because a pushed branch tip is behind its remote\n"
 	   "counterpart. Check out this branch and integrate the remote changes\n"
@@ -301,6 +357,13 @@ static void advise_pull_before_push(void)
 	if (!advice_push_non_ff_current || !advice_push_update_rejected)
 		return;
 	advise(_(message_advice_pull_before_push));
+}
+
+static void advise_push_force_with_lease(void)
+{
+	if (!advice_push_non_ff_current || !advice_push_update_rejected)
+		return;
+	advise(_(message_advice_push_force_with_lease));
 }
 
 static void advise_checkout_pull_push(void)
@@ -378,7 +441,10 @@ static int push_with_options(struct transport *transport, struct refspec *rs,
 		return 0;
 
 	if (reject_reasons & REJECT_NON_FF_HEAD) {
-		advise_pull_before_push();
+		if (test_rebased && likely_rebased_history(rs))
+			advise_push_force_with_lease();
+		else
+			advise_pull_before_push();
 	} else if (reject_reasons & REJECT_NON_FF_OTHER) {
 		advise_checkout_pull_push();
 	} else if (reject_reasons & REJECT_ALREADY_EXISTS) {
@@ -518,6 +584,9 @@ static int git_push_config(const char *k, const char *v, void *cb)
 	} else if (!strcmp(k, "color.push")) {
 		push_use_color = git_config_colorbool(k, v);
 		return 0;
+	} else if (!strcmp(k, "push.rebased")) {
+		int val = git_config_bool(k, v) ? 1 : 0;
+		test_rebased = val;
 	} else if (skip_prefix(k, "color.push.", &slot_name)) {
 		int slot = parse_push_color_slot(slot_name);
 		if (slot < 0)
