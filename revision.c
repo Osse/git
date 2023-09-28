@@ -48,13 +48,61 @@
 #include "resolve-undo.h"
 #include "parse-options.h"
 #include "wildmatch.h"
+#include "strbuf.h"
 
 volatile show_early_output_fn_t show_early_output;
 
 static const char *term_bad;
 static const char *term_good;
 
+static int indent = 0;
+
 implement_shared_commit_slab(revision_sources, char *);
+
+static char *print_flags(unsigned int flag)
+{
+	struct strbuf sb;
+	strbuf_init(&sb, 0);
+	if (flag & SEEN)
+		strbuf_addstr(&sb, " | SEEN");
+	if (flag & UNINTERESTING)
+		strbuf_addstr(&sb, " | UNINTERESTING");
+	if (flag & TREESAME)
+		strbuf_addstr(&sb, " | TREESAME");
+	if (flag & SHOWN)
+		strbuf_addstr(&sb, " | SHOWN");
+	if (flag & TMP_MARK)
+		strbuf_addstr(&sb, " | TMP_MARK");
+	if (flag & BOUNDARY)
+		strbuf_addstr(&sb, " | BOUNDARY");
+	if (flag & CHILD_SHOWN)
+		strbuf_addstr(&sb, " | CHILD_SHOWN");
+	if (flag & ADDED)
+		strbuf_addstr(&sb, " | ADDED");
+	if (flag & SYMMETRIC_LEFT)
+		strbuf_addstr(&sb, " | SYMMETRIC_LEFT");
+	if (flag & PATCHSAME)
+		strbuf_addstr(&sb, " | PATCHSAME");
+	if (flag & BOTTOM)
+		strbuf_addstr(&sb, " | BOTTOM");
+	if (flag & TOPO_WALK_EXPLORED)
+		strbuf_addstr(&sb, " | TOPO_WALK_EXPLORED");
+	if (flag & TOPO_WALK_INDEGREE)
+		strbuf_addstr(&sb, " | TOPO_WALK_INDEGREE");
+	if (sb.len > 0)
+		return sb.buf + 3;
+	return sb.buf;
+}
+
+static void myprintf(const char *fmt, ...)
+{
+	va_list ap;
+	printf("%*s", indent, "");
+
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+}
 
 static inline int want_ancestry(const struct rev_info *revs);
 
@@ -1140,6 +1188,12 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 {
 	struct commit_list *parent = commit->parents;
 	unsigned pass_flags;
+	char *flags_str;
+	char *pass_flags_str;
+
+	indent += 4;
+	myprintf("Entering process_parents(commit = %s)\n",
+		 oid_to_hex(&commit->object.oid));
 
 	if (commit->object.flags & ADDED)
 		return 0;
@@ -1164,6 +1218,8 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 	 * wasn't uninteresting), in which case we need
 	 * to mark its parents recursively too..
 	 */
+	flags_str = print_flags(commit->object.flags);
+	myprintf("Current flags: %s\n", flags_str);
 	if (commit->object.flags & UNINTERESTING) {
 		while (parent) {
 			struct commit *p = parent->item;
@@ -1184,6 +1240,9 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 			if (revs->exclude_first_parent_only)
 				break;
 		}
+
+		myprintf("Exiting process_parents() early 1\n");
+		indent -= 4;
 		return 0;
 	}
 
@@ -1194,16 +1253,23 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 	 */
 	try_to_simplify_commit(revs, commit);
 
-	if (revs->no_walk)
+	if (revs->no_walk) {
+		myprintf("Exiting process_parents() early 2\n");
+		indent -= 4;
 		return 0;
+	}
 
 	pass_flags = (commit->object.flags & (SYMMETRIC_LEFT | ANCESTRY_PATH));
+	pass_flags_str = print_flags(pass_flags);
+	myprintf("Pass flags: %s\n", pass_flags_str);
 
 	for (parent = commit->parents; parent; parent = parent->next) {
 		struct commit *p = parent->item;
 		int gently = revs->ignore_missing_links ||
 			     revs->exclude_promisor_objects ||
 			     revs->do_not_die_on_missing_objects;
+		pass_flags_str = print_flags(p->object.flags);
+		myprintf("Parent flags: %s\n", pass_flags_str);
 		if (repo_parse_commit_gently(revs->repo, p, gently) < 0) {
 			if (revs->exclude_promisor_objects &&
 			    is_promisor_object(&p->object.oid)) {
@@ -1214,8 +1280,11 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 
 			if (revs->do_not_die_on_missing_objects)
 				oidset_insert(&revs->missing_commits, &p->object.oid);
-			else
+			else {
+				myprintf("Exiting process_parents() early 3\n");
+				indent -= 4;
 				return -1; /* corrupt repository */
+			}
 		}
 		if (revs->sources) {
 			char **slot = revision_sources_at(revs->sources, p);
@@ -1223,7 +1292,10 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 			if (!*slot)
 				*slot = *revision_sources_at(revs->sources, commit);
 		}
+		myprintf("Passing flags to parent %p\n", (void *)p);
 		p->object.flags |= pass_flags;
+		pass_flags_str = print_flags(p->object.flags);
+		myprintf("Passed flags: %s\n", pass_flags_str);
 		if (!(p->object.flags & SEEN)) {
 			p->object.flags |= (SEEN | NOT_USER_GIVEN);
 			if (list)
@@ -1234,6 +1306,8 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 		if (revs->first_parent_only)
 			break;
 	}
+	myprintf("Exiting process_parents()\n");
+	indent -= 4;
 	return 0;
 }
 
@@ -1469,6 +1543,8 @@ static int limit_list(struct rev_info *revs)
 	struct commit_list *newlist = NULL;
 	struct commit_list **p = &newlist;
 	struct commit *interesting_cache = NULL;
+	indent += 4;
+	myprintf("Entering limit_list()\n");
 
 	if (revs->ancestry_path_implicit_bottoms) {
 		collect_bottom_commits(original_list,
@@ -1481,6 +1557,9 @@ static int limit_list(struct rev_info *revs)
 		struct commit *commit = pop_commit(&original_list);
 		struct object *obj = &commit->object;
 		show_early_output_fn_t show;
+
+		myprintf("Current commit: %s\n",
+			 oid_to_hex(&commit->object.oid));
 
 		if (commit == interesting_cache)
 			interesting_cache = NULL;
@@ -1537,6 +1616,8 @@ static int limit_list(struct rev_info *revs)
 
 	free_commit_list(original_list);
 	revs->commits = newlist;
+	myprintf("Exiting limit_list()\n");
+	indent -= 4;
 	return 0;
 }
 
@@ -3642,18 +3723,39 @@ static void trace2_topo_walk_statistics_atexit(void)
 
 static inline void test_flag_and_insert(struct prio_queue *q, struct commit *c, int flag)
 {
-	if (c->object.flags & flag)
+	char *init_flags;
+	char *flag_str;
+
+	flag_str = print_flags(flag);
+	init_flags = print_flags(c->object.flags);
+
+	indent += 4;
+	myprintf("Entering test_flag_and_insert(c = %p: %s, flag = %s)\n",
+		 (void *)c, oid_to_hex(&c->object.oid), flag_str);
+	myprintf("Initial flags: %s\n", init_flags);
+
+	if (c->object.flags & flag) {
+		myprintf("Exiting test_flag_and_insert() early\n");
+		indent -= 4;
 		return;
+	}
 
 	c->object.flags |= flag;
 	prio_queue_put(q, c);
+	myprintf("Exiting test_flag_and_insert()\n");
+	indent -= 4;
 }
 
 static void explore_walk_step(struct rev_info *revs)
 {
 	struct topo_walk_info *info = revs->topo_walk_info;
 	struct commit_list *p;
+	char *flags_str;
 	struct commit *c = prio_queue_get(&info->explore_queue);
+	indent += 4;
+	myprintf("Entering explore_walk_step(), c = %p\n", (void *)c);
+	flags_str = print_flags(c->object.flags);
+	myprintf("Current flags: %s\n", flags_str);
 
 	if (!c)
 		return;
@@ -3669,14 +3771,24 @@ static void explore_walk_step(struct rev_info *revs)
 	if (revs->max_age != -1 && (c->date < revs->max_age))
 		c->object.flags |= UNINTERESTING;
 
-	if (process_parents(revs, c, NULL, NULL) < 0)
+	if (process_parents(revs, c, NULL, NULL) < 0) {
+		myprintf("Exiting explore_walk_step()EARLY\n");
+		indent -= 4;
 		return;
+	}
 
 	if (c->object.flags & UNINTERESTING)
 		mark_parents_uninteresting(revs, c);
 
-	for (p = c->parents; p; p = p->next)
-		test_flag_and_insert(&info->explore_queue, p->item, TOPO_WALK_EXPLORED);
+	for (p = c->parents; p; p = p->next) {
+		char *pass_flags_str = print_flags(p->item->object.flags);
+		myprintf("Current flags now of parent %p: %s\n",
+			 (void *)p->item, pass_flags_str);
+		test_flag_and_insert(&info->explore_queue, p->item,
+				     TOPO_WALK_EXPLORED);
+	}
+	myprintf("Exiting explore_walk_step()\n");
+	indent -= 4;
 }
 
 static void explore_to_depth(struct rev_info *revs,
@@ -3684,9 +3796,13 @@ static void explore_to_depth(struct rev_info *revs,
 {
 	struct topo_walk_info *info = revs->topo_walk_info;
 	struct commit *c;
+	indent += 4;
+	myprintf("Entering explore_to_depth(gen_cutoff = %li)\n", gen_cutoff);
 	while ((c = prio_queue_peek(&info->explore_queue)) &&
 	       commit_graph_generation(c) >= gen_cutoff)
 		explore_walk_step(revs);
+	myprintf("Exiting explore_to_depth()\n");
+	indent -= 4;
 }
 
 static void indegree_walk_step(struct rev_info *revs)
@@ -3694,6 +3810,8 @@ static void indegree_walk_step(struct rev_info *revs)
 	struct commit_list *p;
 	struct topo_walk_info *info = revs->topo_walk_info;
 	struct commit *c = prio_queue_get(&info->indegree_queue);
+	indent += 4;
+	myprintf("Entering indegree_walk_step()\n");
 
 	if (!c)
 		return;
@@ -3712,6 +3830,9 @@ static void indegree_walk_step(struct rev_info *revs)
 		if (repo_parse_commit_gently(revs->repo, parent, 1) < 0)
 			return;
 
+		myprintf("hash: %s, indegree: %i\n",
+			 oid_to_hex(&parent->object.oid), *pi);
+
 		if (*pi)
 			(*pi)++;
 		else
@@ -3722,6 +3843,8 @@ static void indegree_walk_step(struct rev_info *revs)
 		if (revs->first_parent_only)
 			return;
 	}
+	myprintf("Exiting indegree_walk_step()\n");
+	indent -= 4;
 }
 
 static void compute_indegrees_to_depth(struct rev_info *revs,
@@ -3729,9 +3852,14 @@ static void compute_indegrees_to_depth(struct rev_info *revs,
 {
 	struct topo_walk_info *info = revs->topo_walk_info;
 	struct commit *c;
+	indent += 4;
+	myprintf("Entering compute_indegrees_to_depth(gen_cutoff = %li)\n",
+		 gen_cutoff);
 	while ((c = prio_queue_peek(&info->indegree_queue)) &&
 	       commit_graph_generation(c) >= gen_cutoff)
 		indegree_walk_step(revs);
+	myprintf("Exiting compute_indegrees_to_depth()\n");
+	indent -= 4;
 }
 
 static void release_revisions_topo_walk_info(struct topo_walk_info *info)
@@ -3756,6 +3884,8 @@ static void init_topo_walk(struct rev_info *revs)
 {
 	struct topo_walk_info *info;
 	struct commit_list *list;
+	indent += 4;
+	myprintf("Entering init_topo_walk()\n");
 	if (revs->topo_walk_info)
 		reset_topo_walk(revs);
 
@@ -3825,19 +3955,29 @@ static void init_topo_walk(struct rev_info *revs)
 		atexit(trace2_topo_walk_statistics_atexit);
 		topo_walk_atexit_registered = 1;
 	}
+	myprintf("Exiting init_topo_walk()\n");
+	indent -= 4;
 }
 
 static struct commit *next_topo_commit(struct rev_info *revs)
 {
 	struct commit *c;
 	struct topo_walk_info *info = revs->topo_walk_info;
+	indent += 4;
+	myprintf("Entering next_topo_commit()\n");
 
 	/* pop next off of topo_queue */
 	c = prio_queue_get(&info->topo_queue);
 
-	if (c)
+	if (c) {
 		*(indegree_slab_at(&info->indegree, c)) = 0;
 
+		myprintf("From topo queue: %p - %s", (void *)c,
+			 oid_to_hex(&c->object.oid));
+	}
+
+	myprintf("Exiting next_topo_commit()\n");
+	indent -= 4;
 	return c;
 }
 
@@ -3845,6 +3985,8 @@ static void expand_topo_walk(struct rev_info *revs, struct commit *commit)
 {
 	struct commit_list *p;
 	struct topo_walk_info *info = revs->topo_walk_info;
+	indent += 4;
+	myprintf("Entering expand_topo_walk()\n");
 	if (process_parents(revs, commit, NULL, NULL) < 0) {
 		if (!revs->ignore_missing_links)
 			die("Failed to traverse parents of commit %s",
@@ -3871,14 +4013,21 @@ static void expand_topo_walk(struct rev_info *revs, struct commit *commit)
 		}
 
 		pi = indegree_slab_at(&info->indegree, parent);
+		myprintf("hash: %s, indegree: %i\n",
+			 oid_to_hex(&parent->object.oid), *pi);
 
 		(*pi)--;
-		if (*pi == 1)
+		if (*pi == 1) {
+			myprintf("adding to topo queue: %s\n",
+				 oid_to_hex(&parent->object.oid));
 			prio_queue_put(&info->topo_queue, parent);
+		}
 
 		if (revs->first_parent_only)
 			return;
 	}
+	myprintf("Exiting expand_topo_walk()\n");
+	indent -= 4;
 }
 
 int prepare_revision_walk(struct rev_info *revs)
@@ -3923,7 +4072,8 @@ int prepare_revision_walk(struct rev_info *revs)
 		if (limit_list(revs) < 0)
 			return -1;
 		if (revs->topo_order)
-			sort_in_topological_order(&revs->commits, revs->sort_order);
+			sort_in_topological_order(&revs->commits,
+						  revs->sort_order);
 	} else if (revs->topo_order)
 		init_topo_walk(revs);
 	if (revs->line_level_traverse && want_ancestry(revs))
@@ -4461,6 +4611,8 @@ struct commit *get_revision(struct rev_info *revs)
 {
 	struct commit *c;
 	struct commit_list *reversed;
+	indent += 4;
+	myprintf("Entering get_revision()\n");
 
 	if (revs->reverse) {
 		reversed = NULL;
@@ -4487,6 +4639,12 @@ struct commit *get_revision(struct rev_info *revs)
 		free_commit_list(revs->previous_parents);
 		revs->previous_parents = NULL;
 	}
+	if (c)
+		myprintf("get_revision hash: %s\n", oid_to_hex(&c->object.oid));
+	else
+		myprintf("get_revision NONE\n");
+	myprintf("Exiting get_revision()\n");
+	indent -= 4;
 	return c;
 }
 
@@ -4505,6 +4663,7 @@ const char *get_revision_mark(const struct rev_info *revs, const struct commit *
 			return ">";
 	} else if (revs->graph)
 		return "*";
+
 	else if (revs->cherry_mark)
 		return "+";
 	return "";
