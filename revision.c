@@ -1236,7 +1236,11 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 			if (list)
 				commit_list_insert_by_date(p, list);
 			if (queue)
+			{
+				myprintf("adding to topo queue: %s\n",
+					 oid_to_hex(&p->object.oid));
 				prio_queue_put(queue, p);
+			}
 			if (revs->exclude_first_parent_only)
 				break;
 		}
@@ -3920,6 +3924,8 @@ static void init_topo_walk(struct rev_info *revs)
 		struct commit *c = list->item;
 		timestamp_t generation;
 
+		myprintf("parsing: %s\n",
+			 oid_to_hex(&c->object.oid));
 		if (repo_parse_commit_gently(revs->repo, c, 1))
 			continue;
 
@@ -3941,7 +3947,11 @@ static void init_topo_walk(struct rev_info *revs)
 		struct commit *c = list->item;
 
 		if (*(indegree_slab_at(&info->indegree, c)) == 1)
+		{
+			myprintf("adding to topo queue: %s\n",
+				 oid_to_hex(&c->object.oid));
 			prio_queue_put(&info->topo_queue, c);
+		}
 	}
 
 	/*
@@ -3949,7 +3959,12 @@ static void init_topo_walk(struct rev_info *revs)
 	 * in the order given from the revision traversal machinery.
 	 */
 	if (revs->sort_order == REV_SORT_IN_GRAPH_ORDER)
+	{
+		myprintf("reversing topo queue\n");
 		prio_queue_reverse(&info->topo_queue);
+	}
+	else
+		myprintf("NOT reversing topo queue: revs->sort_order = %d\n", revs->sort_order);
 
 	if (trace2_is_enabled() && !topo_walk_atexit_registered) {
 		atexit(trace2_topo_walk_statistics_atexit);
@@ -4035,6 +4050,8 @@ int prepare_revision_walk(struct rev_info *revs)
 	int i;
 	struct object_array old_pending;
 	struct commit_list **next = &revs->commits;
+	myprintf("prepare_revision_walk: rev->commits len = %d\n",
+		 commit_list_count(revs->commits));
 
 	memcpy(&old_pending, &revs->pending, sizeof(old_pending));
 	revs->pending.nr = 0;
@@ -4046,11 +4063,15 @@ int prepare_revision_walk(struct rev_info *revs)
 		if (commit) {
 			if (!(commit->object.flags & SEEN)) {
 				commit->object.flags |= SEEN;
+				myprintf("adding to commit list: %s\n",
+					 oid_to_hex(&commit->object.oid));
 				next = commit_list_append(commit, next);
 			}
 		}
 	}
 	object_array_clear(&old_pending);
+
+	myprintf("prepare_revision_walk: rev->commits len = %d\n", commit_list_count(revs->commits));
 
 	/* Signal whether we need per-parent treesame decoration */
 	if (revs->simplify_merges ||
