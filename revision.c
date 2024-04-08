@@ -49,13 +49,12 @@
 #include "parse-options.h"
 #include "wildmatch.h"
 #include "strbuf.h"
+#include "osse.h"
 
 volatile show_early_output_fn_t show_early_output;
 
 static const char *term_bad;
 static const char *term_good;
-
-static int indent = 0;
 
 implement_shared_commit_slab(revision_sources, char *);
 
@@ -92,16 +91,6 @@ static char *print_flags(unsigned int flag)
 	if (sb.len > 0)
 		return sb.buf + 3;
 	return sb.buf;
-}
-
-static void myprintf(const char *fmt, ...)
-{
-	va_list ap;
-	printf("%*s", indent, "");
-
-	va_start(ap, fmt);
-	vprintf(fmt, ap);
-	va_end(ap);
 }
 
 static inline int want_ancestry(const struct rev_info *revs);
@@ -1191,20 +1180,24 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 	char *flags_str;
 	char *pass_flags_str;
 
-	indent += 4;
-	myprintf("Entering process_parents(commit = %s)\n",
-		 oid_to_hex(&commit->object.oid));
+	myenter("commit = %s", oid_to_hex(&commit->object.oid));
 
-	if (commit->object.flags & ADDED)
+	if (commit->object.flags & ADDED) {
+		myexit("added");
 		return 0;
+	}
 	if (revs->do_not_die_on_missing_objects &&
-	    oidset_contains(&revs->missing_commits, &commit->object.oid))
+	    oidset_contains(&revs->missing_commits, &commit->object.oid)) {
+		myexit("weird");
 		return 0;
+	}
 	commit->object.flags |= ADDED;
 
 	if (revs->include_check &&
-	    !revs->include_check(commit, revs->include_check_data))
+	    !revs->include_check(commit, revs->include_check_data)) {
+		myexit("include check");
 		return 0;
+	}
 
 	/*
 	 * If the commit is uninteresting, don't try to
@@ -1245,8 +1238,7 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 				break;
 		}
 
-		myprintf("Exiting process_parents() early 1\n");
-		indent -= 4;
+		myexit("early 1");
 		return 0;
 	}
 
@@ -1258,8 +1250,7 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 	try_to_simplify_commit(revs, commit);
 
 	if (revs->no_walk) {
-		myprintf("Exiting process_parents() early 2\n");
-		indent -= 4;
+		myexit("early 2");
 		return 0;
 	}
 
@@ -1285,8 +1276,7 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 			if (revs->do_not_die_on_missing_objects)
 				oidset_insert(&revs->missing_commits, &p->object.oid);
 			else {
-				myprintf("Exiting process_parents() early 3\n");
-				indent -= 4;
+				myexit("early 3");
 				return -1; /* corrupt repository */
 			}
 		}
@@ -1310,8 +1300,7 @@ static int process_parents(struct rev_info *revs, struct commit *commit,
 		if (revs->first_parent_only)
 			break;
 	}
-	myprintf("Exiting process_parents()\n");
-	indent -= 4;
+	myexit("");
 	return 0;
 }
 
@@ -1547,8 +1536,8 @@ static int limit_list(struct rev_info *revs)
 	struct commit_list *newlist = NULL;
 	struct commit_list **p = &newlist;
 	struct commit *interesting_cache = NULL;
-	indent += 4;
-	myprintf("Entering limit_list()\n");
+
+	myenter("");
 
 	if (revs->ancestry_path_implicit_bottoms) {
 		collect_bottom_commits(original_list,
@@ -1620,8 +1609,7 @@ static int limit_list(struct rev_info *revs)
 
 	free_commit_list(original_list);
 	revs->commits = newlist;
-	myprintf("Exiting limit_list()\n");
-	indent -= 4;
+	myexit("");
 	return 0;
 }
 
@@ -3733,21 +3721,18 @@ static inline void test_flag_and_insert(struct prio_queue *q, struct commit *c, 
 	flag_str = print_flags(flag);
 	init_flags = print_flags(c->object.flags);
 
-	indent += 4;
-	myprintf("Entering test_flag_and_insert(c = %p: %s, flag = %s)\n",
-		 (void *)c, oid_to_hex(&c->object.oid), flag_str);
+	myenter("c = %p: %s, flag = %s", (void *)c, oid_to_hex(&c->object.oid),
+		flag_str);
 	myprintf("Initial flags: %s\n", init_flags);
 
 	if (c->object.flags & flag) {
-		myprintf("Exiting test_flag_and_insert() early\n");
-		indent -= 4;
+		myexit("early");
 		return;
 	}
 
 	c->object.flags |= flag;
 	prio_queue_put(q, c);
-	myprintf("Exiting test_flag_and_insert()\n");
-	indent -= 4;
+	myexit("");
 }
 
 static void explore_walk_step(struct rev_info *revs)
@@ -3756,8 +3741,7 @@ static void explore_walk_step(struct rev_info *revs)
 	struct commit_list *p;
 	char *flags_str;
 	struct commit *c = prio_queue_get(&info->explore_queue);
-	indent += 4;
-	myprintf("Entering explore_walk_step(), c = %p\n", (void *)c);
+	myenter("c = %p", (void *)c);
 	flags_str = print_flags(c->object.flags);
 	myprintf("Current flags: %s\n", flags_str);
 
@@ -3776,8 +3760,7 @@ static void explore_walk_step(struct rev_info *revs)
 		c->object.flags |= UNINTERESTING;
 
 	if (process_parents(revs, c, NULL, NULL) < 0) {
-		myprintf("Exiting explore_walk_step()EARLY\n");
-		indent -= 4;
+		myexit("process_parents failed?");
 		return;
 	}
 
@@ -3791,8 +3774,7 @@ static void explore_walk_step(struct rev_info *revs)
 		test_flag_and_insert(&info->explore_queue, p->item,
 				     TOPO_WALK_EXPLORED);
 	}
-	myprintf("Exiting explore_walk_step()\n");
-	indent -= 4;
+	myexit("");
 }
 
 static void explore_to_depth(struct rev_info *revs,
@@ -3800,13 +3782,11 @@ static void explore_to_depth(struct rev_info *revs,
 {
 	struct topo_walk_info *info = revs->topo_walk_info;
 	struct commit *c;
-	indent += 4;
-	myprintf("Entering explore_to_depth(gen_cutoff = %li)\n", gen_cutoff);
+	myenter("gen_cutoff = %li", gen_cutoff);
 	while ((c = prio_queue_peek(&info->explore_queue)) &&
 	       commit_graph_generation(c) >= gen_cutoff)
 		explore_walk_step(revs);
-	myprintf("Exiting explore_to_depth()\n");
-	indent -= 4;
+	myexit("");
 }
 
 static void indegree_walk_step(struct rev_info *revs)
@@ -3814,14 +3794,19 @@ static void indegree_walk_step(struct rev_info *revs)
 	struct commit_list *p;
 	struct topo_walk_info *info = revs->topo_walk_info;
 	struct commit *c = prio_queue_get(&info->indegree_queue);
-	indent += 4;
-	myprintf("Entering indegree_walk_step()\n");
+	myenter("");
 
 	if (!c)
+	{
+		myexit("!c");
 		return;
+	}
 
 	if (repo_parse_commit_gently(revs->repo, c, 1) < 0)
+	{
+		myexit("parse failed 1");
 		return;
+	}
 
 	count_indegree_walked++;
 
@@ -3832,7 +3817,10 @@ static void indegree_walk_step(struct rev_info *revs)
 		int *pi = indegree_slab_at(&info->indegree, parent);
 
 		if (repo_parse_commit_gently(revs->repo, parent, 1) < 0)
+		{
+			myexit("parse failed 2");
 			return;
+		}
 
 		myprintf("hash: %s, indegree: %i\n",
 			 oid_to_hex(&parent->object.oid), *pi);
@@ -3845,10 +3833,12 @@ static void indegree_walk_step(struct rev_info *revs)
 		test_flag_and_insert(&info->indegree_queue, parent, TOPO_WALK_INDEGREE);
 
 		if (revs->first_parent_only)
+		{
+			myexit("first parent");
 			return;
+		}
 	}
-	myprintf("Exiting indegree_walk_step()\n");
-	indent -= 4;
+	myexit("");
 }
 
 static void compute_indegrees_to_depth(struct rev_info *revs,
@@ -3856,14 +3846,11 @@ static void compute_indegrees_to_depth(struct rev_info *revs,
 {
 	struct topo_walk_info *info = revs->topo_walk_info;
 	struct commit *c;
-	indent += 4;
-	myprintf("Entering compute_indegrees_to_depth(gen_cutoff = %li)\n",
-		 gen_cutoff);
+	myenter("gen_cutoff = %li", gen_cutoff);
 	while ((c = prio_queue_peek(&info->indegree_queue)) &&
 	       commit_graph_generation(c) >= gen_cutoff)
 		indegree_walk_step(revs);
-	myprintf("Exiting compute_indegrees_to_depth()\n");
-	indent -= 4;
+	myexit("");
 }
 
 static void release_revisions_topo_walk_info(struct topo_walk_info *info)
@@ -3888,8 +3875,7 @@ static void init_topo_walk(struct rev_info *revs)
 {
 	struct topo_walk_info *info;
 	struct commit_list *list;
-	indent += 4;
-	myprintf("Entering init_topo_walk()\n");
+	myenter("");
 	if (revs->topo_walk_info)
 		reset_topo_walk(revs);
 
@@ -3970,16 +3956,14 @@ static void init_topo_walk(struct rev_info *revs)
 		atexit(trace2_topo_walk_statistics_atexit);
 		topo_walk_atexit_registered = 1;
 	}
-	myprintf("Exiting init_topo_walk()\n");
-	indent -= 4;
+	myexit("");
 }
 
 static struct commit *next_topo_commit(struct rev_info *revs)
 {
 	struct commit *c;
 	struct topo_walk_info *info = revs->topo_walk_info;
-	indent += 4;
-	myprintf("Entering next_topo_commit()\n");
+	myenter("");
 
 	/* pop next off of topo_queue */
 	c = prio_queue_get(&info->topo_queue);
@@ -3987,12 +3971,11 @@ static struct commit *next_topo_commit(struct rev_info *revs)
 	if (c) {
 		*(indegree_slab_at(&info->indegree, c)) = 0;
 
-		myprintf("From topo queue: %p - %s", (void *)c,
+		myprintf("From topo queue: %p - %s\n", (void *)c,
 			 oid_to_hex(&c->object.oid));
 	}
 
-	myprintf("Exiting next_topo_commit()\n");
-	indent -= 4;
+	myexit("");
 	return c;
 }
 
@@ -4000,8 +3983,7 @@ static void expand_topo_walk(struct rev_info *revs, struct commit *commit)
 {
 	struct commit_list *p;
 	struct topo_walk_info *info = revs->topo_walk_info;
-	indent += 4;
-	myprintf("Entering expand_topo_walk()\n");
+	myenter("");
 	if (process_parents(revs, commit, NULL, NULL) < 0) {
 		if (!revs->ignore_missing_links)
 			die("Failed to traverse parents of commit %s",
@@ -4039,10 +4021,12 @@ static void expand_topo_walk(struct rev_info *revs, struct commit *commit)
 		}
 
 		if (revs->first_parent_only)
+		{
+			myexit("first parent");
 			return;
+		}
 	}
-	myprintf("Exiting expand_topo_walk()\n");
-	indent -= 4;
+	myexit("");
 }
 
 int prepare_revision_walk(struct rev_info *revs)
@@ -4050,8 +4034,8 @@ int prepare_revision_walk(struct rev_info *revs)
 	int i;
 	struct object_array old_pending;
 	struct commit_list **next = &revs->commits;
-	myprintf("prepare_revision_walk: rev->commits len = %d\n",
-		 commit_list_count(revs->commits));
+	myenter("");
+	myprintf("rev->commits len = %d\n", commit_list_count(revs->commits));
 
 	memcpy(&old_pending, &revs->pending, sizeof(old_pending));
 	revs->pending.nr = 0;
@@ -4111,6 +4095,7 @@ int prepare_revision_walk(struct rev_info *revs)
 	if (revs->children.name)
 		set_children(revs);
 
+	myexit("");
 	return 0;
 }
 
@@ -4632,8 +4617,7 @@ struct commit *get_revision(struct rev_info *revs)
 {
 	struct commit *c;
 	struct commit_list *reversed;
-	indent += 4;
-	myprintf("Entering get_revision()\n");
+	myenter("");
 
 	if (revs->reverse) {
 		reversed = NULL;
@@ -4664,8 +4648,7 @@ struct commit *get_revision(struct rev_info *revs)
 		myprintf("get_revision hash: %s\n", oid_to_hex(&c->object.oid));
 	else
 		myprintf("get_revision NONE\n");
-	myprintf("Exiting get_revision()\n");
-	indent -= 4;
+	myexit("");
 	return c;
 }
 
