@@ -1537,7 +1537,7 @@ static int limit_list(struct rev_info *revs)
 	struct commit_list **p = &newlist;
 	struct commit *interesting_cache = NULL;
 
-	myenter("");
+	myenter("limit_list()");
 
 	if (revs->ancestry_path_implicit_bottoms) {
 		collect_bottom_commits(original_list,
@@ -3191,8 +3191,8 @@ int setup_revisions(int argc, const char **argv, struct rev_info *revs, struct s
 		revs->topo_order = 1;
 	}
 
-	if (revs->topo_order && !generation_numbers_enabled(the_repository))
-		revs->limited = 1;
+	/* if (revs->topo_order && !generation_numbers_enabled(the_repository)) */
+	/* 	revs->limited = 1; */
 
 	if (revs->prune_data.nr) {
 		copy_pathspec(&revs->pruning.pathspec, &revs->prune_data);
@@ -4074,6 +4074,7 @@ int prepare_revision_walk(struct rev_info *revs)
 	if (revs->no_walk)
 		return 0;
 	if (revs->limited) {
+		myprintf("Hello\n");
 		if (limit_list(revs) < 0)
 			return -1;
 		if (revs->topo_order)
