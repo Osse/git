@@ -63,6 +63,7 @@ OPTIONS
 	of a conflict.
 
 -x::
+--no-x::
 	When recording the commit, append a line that says
 	"(cherry picked from commit ...)" to the original commit
 	message in order to indicate which commit this change was
@@ -75,6 +76,8 @@ OPTIONS
 	maintenance branch for an older release from a
 	development branch), adding this information can be
 	useful.
++
+Use `--no-x` to override the `cherrypick.x` configuration variable.
 
 -r::
 	It used to be that the command defaulted to do `-x`
@@ -249,6 +252,11 @@ $ git cherry-pick -Xpatience topic^  <4>
 <4> try to apply the change introduced by `topic^` again,
     spending extra time to avoid mistakes based on incorrectly
     matching context lines.
+
+CONFIGURATION
+-------------
+
+include::config/cherry-pick.adoc[]
 
 SEE ALSO
 --------

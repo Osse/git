@@ -397,6 +397,8 @@ include::config/bundle.adoc[]
 
 include::config/checkout.adoc[]
 
+include::config/cherry-pick.adoc[]
+
 include::config/clean.adoc[]
 
 include::config/clone.adoc[]

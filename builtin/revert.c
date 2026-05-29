@@ -149,7 +149,7 @@ static int run_sequencer(int argc, const char **argv, const char *prefix,
 
 	if (opts->action == REPLAY_PICK) {
 		struct option cp_extra[] = {
-			OPT_BOOL('x', NULL, &opts->record_origin, N_("append commit name")),
+			OPT_BOOL('x', "x", &opts->record_origin, N_("append commit name")),
 			OPT_BOOL(0, "ff", &opts->allow_ff, N_("allow fast-forward")),
 			OPT_BOOL(0, "allow-empty", &opts->allow_empty, N_("preserve initially empty commits")),
 			OPT_BOOL(0, "allow-empty-message", &opts->allow_empty_message, N_("allow commits with empty messages")),

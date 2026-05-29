@@ -305,6 +305,11 @@ static int git_sequencer_config(const char *k, const char *v,
 		return 0;
 	}
 
+	if (opts->action == REPLAY_PICK && !strcmp(k, "cherrypick.x")) {
+		opts->record_origin = git_config_bool(k, v);
+		return 0;
+	}
+
 	if (!opts->default_strategy && !strcmp(k, "pull.twohead")) {
 		int ret = git_config_string(&opts->default_strategy, k, v);
 		if (ret == 0) {

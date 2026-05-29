@@ -1,0 +1,3 @@
+cherrypick.x::
+	If set to true, enable the `-x` option by default. See
+	linkgit:git-cherry-pick[1].

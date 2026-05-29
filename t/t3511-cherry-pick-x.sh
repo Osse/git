@@ -318,4 +318,43 @@ test_expect_success 'cherry-pick -x respects commit.cleanup' '
 	test_cmp expect actual
 '
 
+test_expect_success 'cherry-pick with cherrypick.x=true appends origin' '
+	pristine_detach initial &&
+	sha1=$(git rev-parse mesg-one-line^0) &&
+	git -c cherrypick.x=true cherry-pick mesg-one-line &&
+	cat <<-EOF >expect &&
+		$mesg_one_line
+
+		(cherry picked from commit $sha1)
+	EOF
+	git log -1 --pretty=format:%B >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'cherry-pick -x overrides cherrypick.x=false' '
+	pristine_detach initial &&
+	sha1=$(git rev-parse mesg-one-line^0) &&
+	git -c cherrypick.x=false cherry-pick -x mesg-one-line &&
+	cat <<-EOF >expect &&
+		$mesg_one_line
+
+		(cherry picked from commit $sha1)
+	EOF
+	git log -1 --pretty=format:%B >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'revert is not affected by cherrypick.x' '
+	git -c cherrypick.x=true revert --no-edit HEAD &&
+	git log -1 --pretty=format:%B >actual &&
+	! grep "cherry picked from" actual
+'
+
+test_expect_success 'cherry-pick --no-x overrides cherrypick.x=true' '
+	pristine_detach initial &&
+	git -c cherrypick.x=true cherry-pick --no-x mesg-one-line &&
+	git log -1 --pretty=format:%B >actual &&
+	! grep "cherry picked from" actual
+'
+
 test_done
